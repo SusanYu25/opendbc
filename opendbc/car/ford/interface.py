@@ -8,6 +8,7 @@ from opendbc.car.ford.fordcan import CanBus
 from opendbc.car.ford.radar_interface import RadarInterface
 from opendbc.car.ford.values import CarControllerParams, DBC, Ecu, FordFlags, RADAR, FordSafetyFlags
 from opendbc.car.interfaces import CarInterfaceBase
+from common.params import Params
 
 TransmissionType = structs.CarParams.TransmissionType
 
@@ -33,6 +34,34 @@ class CarInterface(CarInterfaceBase):
     ret.steerActuatorDelay = 0.2
     ret.steerLimitTimer = 1.0
     ret.steerAtStandstill = True
+
+    # 检查并设置APA转向辅助功能支持
+    params = Params()
+    if "FORD EXPLORER" in candidate.upper() or "LINCOLN AVIATOR" in candidate.upper():
+      # 林肯飞行家和福特探险者支持APA转向辅助
+      carlog.info(f"APA转向辅助功能: 检测到支持的车型 {candidate}")
+
+      # 记录车型和CANFD状态
+      is_canfd = bool(ret.flags & FordFlags.CANFD)
+      carlog.info(f"APA转向辅助功能: 车型={candidate}, CANFD={is_canfd}")
+
+      # 设置APA参数
+      params.put_bool("APASupported", True)
+      params.put("APASupportedModel", candidate)
+
+      # 如果用户之前没有设置过APA转向辅助模式，默认设置为"平衡"模式
+      if params.get("DynamicSteeringAggressiveness") is None:
+        params.put("DynamicSteeringAggressiveness", "3")  # 默认平衡模式
+
+      # 如果是林肯飞行家，添加特殊配置
+      if "LINCOLN AVIATOR" in candidate.upper():
+        carlog.info("APA转向辅助功能: 检测到林肯飞行家，应用特殊配置")
+        # 林肯飞行家是非CANFD车型，需要特殊处理
+        params.put("APAVehicleType", "LINCOLN_AVIATOR")
+    else:
+      # 不支持APA转向辅助的车型
+      params.put_bool("APASupported", False)
+      carlog.debug(f"APA转向辅助功能: 不支持的车型 {candidate}")
 
     ret.longitudinalTuning.kiBP = [0.]
     ret.longitudinalTuning.kiV = [0.5]

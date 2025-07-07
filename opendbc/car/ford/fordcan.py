@@ -291,6 +291,34 @@ def create_lkas_ui_msg(packer, CAN: CanBus, main_on: bool, enabled: bool, steer_
   return packer.make_can_msg("IPMA_Data", CAN.main, values)
 
 
+def create_apa_steering_command(packer, CAN: CanBus, angle_deg: float):
+  """
+  Creates a CAN message for the Ford APA Steering Command.
+  This uses the ExtSteeringAngleReq2 signal for precise steering control.
+
+  此函数同时支持CANFD和非CANFD车型，如林肯飞行家(Lincoln Aviator)。
+  """
+  # 限制角度范围在-1000到2276.5度之间(根据DBC文件中的定义)
+  angle_deg = max(min(angle_deg, 2276.5), -1000)
+
+  values = {
+    "ApaSys_D_Stat": 2,  # 2="On"
+    "ApaSteScanMde_D_Stat": 3,  # 3="Steering" (修改为Steering模式，更适合APA转向辅助)
+    "ApaSelSapp_D_Stat": 0,  # 0="Null"
+    "ApaMsgTxt_D_Rq": 0,  # 0="Null"
+    "ExtSteeringAngleReq2": angle_deg,  # 精确的转向角度请求
+    "ApaGearShif_D_RqDrv": 1,  # 1="NoRequest"
+    "ApaLongCtl_D_RqDrv": 1,  # 1="NoRequest"
+    "ApaActvSide2_D_Stat": 0,  # 0="Null"
+    "ApaAcsy_D_RqDrv": 1,  # 1="NoRequest"
+    "ApaTrgtDist_D_Stat": 0,  # 0="Off"
+    "ApaSteWhl_D_RqDrv": 2,  # 2="RemoveHands" (修改为RemoveHands，提示驾驶员可以放手)
+  }
+  # 根据DBC文件，APA信号在消息ID 936 (ParkAid_Data)中
+  # 此消息在CANFD和非CANFD车型中都存在
+  return packer.make_can_msg("ParkAid_Data", CAN.main, values)
+
+
 def create_button_msg(packer, bus: int, stock_values: dict, cancel=False, resume=False, tja_toggle=False):
   """
   Creates a CAN message for the Ford SCCM buttons/switches.

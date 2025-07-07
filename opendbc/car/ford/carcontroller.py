@@ -46,6 +46,7 @@ class CarController(CarControllerBase):
     super().__init__(dbc_names, CP, CP_SP)
     self.packer = CANPacker(dbc_names[Bus.pt])
     self.CAN = fordcan.CanBus(CP)
+    self.params = CP_SP.params
 
     self.apply_curvature_last = 0
     self.accel = 0.0
@@ -82,23 +83,37 @@ class CarController(CarControllerBase):
     ### lateral control ###
     # send steer msg at 20Hz
     if (self.frame % CarControllerParams.STEER_STEP) == 0:
-      # apply rate limits, curvature error limit, and clip to signal range
-      current_curvature = -CS.out.yawRate / max(CS.out.vEgoRaw, 0.1)
-      self.apply_curvature_last = apply_ford_curvature_limits(actuators.curvature, self.apply_curvature_last, current_curvature,
-                                                              CS.out.vEgoRaw, 0., CC.latActive, self.CP)
+      # 如果APA转向辅助已启用，则使用新的APA命令
+      if self.params.get_bool("DynamicSteeringEnabled"):
+        # 从曲率计算转向角度 (度) = 曲率 * 转向比 * 180/π
+        # 使用负值是因为Ford的转向角度定义与openpilot相反
+        steering_angle_deg = -actuators.curvature * self.CP.steerRatio * 180 / 3.14159
 
-      if self.CP.flags & FordFlags.CANFD:
-        # TODO: extended mode
-        # Ford uses four individual signals to dictate how to drive to the car. Curvature alone (limited to 0.02m/s^2)
-        # can actuate the steering for a large portion of any lateral movements. However, in order to get further control on
-        # steer actuation, the other three signals are necessary. Ford controls vehicles differently than most other makes.
-        # A detailed explanation on ford control can be found here:
-        # https://www.f150gen14.com/forum/threads/introducing-bluepilot-a-ford-specific-fork-for-comma3x-openpilot.24241/#post-457706
-        mode = 1 if CC.latActive else 0
-        counter = (self.frame // CarControllerParams.STEER_STEP) % 0x10
-        can_sends.append(fordcan.create_lat_ctl2_msg(self.packer, self.CAN, mode, 0., 0., -self.apply_curvature_last, 0., counter))
+        # 添加日志，记录APA转向命令的发送
+        if self.frame % 100 == 0:  # 每5秒记录一次(20Hz * 100 = 5秒)
+          is_canfd = bool(self.CP.flags & FordFlags.CANFD)
+          carlog.debug(f"APA转向辅助: 发送转向命令 {steering_angle_deg:.2f}度, CANFD={is_canfd}")
+
+        # 发送APA转向命令
+        can_sends.append(fordcan.create_apa_steering_command(self.packer, self.CAN, steering_angle_deg))
       else:
-        can_sends.append(fordcan.create_lat_ctl_msg(self.packer, self.CAN, CC.latActive, 0., 0., -self.apply_curvature_last, 0.))
+        # apply rate limits, curvature error limit, and clip to signal range
+        current_curvature = -CS.out.yawRate / max(CS.out.vEgoRaw, 0.1)
+        self.apply_curvature_last = apply_ford_curvature_limits(actuators.curvature, self.apply_curvature_last, current_curvature,
+                                                                CS.out.vEgoRaw, 0., CC.latActive, self.CP)
+
+        if self.CP.flags & FordFlags.CANFD:
+          # TODO: extended mode
+          # Ford uses four individual signals to dictate how to drive to the car. Curvature alone (limited to 0.02m/s^2)
+          # can actuate the steering for a large portion of any lateral movements. However, in order to get further control on
+          # steer actuation, the other three signals are necessary. Ford controls vehicles differently than most other makes.
+          # A detailed explanation on ford control can be found here:
+          # https://www.f150gen14.com/forum/threads/introducing-bluepilot-a-ford-specific-fork-for-comma3x-openpilot.24241/#post-457706
+          mode = 1 if CC.latActive else 0
+          counter = (self.frame // CarControllerParams.STEER_STEP) % 0x10
+          can_sends.append(fordcan.create_lat_ctl2_msg(self.packer, self.CAN, mode, 0., 0., -self.apply_curvature_last, 0., counter))
+        else:
+          can_sends.append(fordcan.create_lat_ctl_msg(self.packer, self.CAN, CC.latActive, 0., 0., -self.apply_curvature_last, 0.))
 
     # send lka msg at 33Hz
     if (self.frame % CarControllerParams.LKA_STEP) == 0:
