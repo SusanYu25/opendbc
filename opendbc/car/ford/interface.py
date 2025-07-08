@@ -45,22 +45,34 @@ class CarInterface(CarInterfaceBase):
       is_canfd = bool(ret.flags & FordFlags.CANFD)
       carlog.info(f"APA转向辅助功能: 车型={candidate}, CANFD={is_canfd}")
 
-      # 设置APA参数
-      params.put_bool("APASupported", True)
-      params.put("APASupportedModel", candidate)
+      # 设置APA参数 - 使用try/except处理可能不存在的参数键
+      try:
+        params.put_bool("APASupported", True)
+        params.put("APASupportedModel", candidate)
+      except Exception as e:
+        carlog.error(f"APA转向辅助功能: 设置参数失败 - {e}")
 
       # 如果用户之前没有设置过APA转向辅助模式，默认设置为"平衡"模式
-      if params.get("DynamicSteeringAggressiveness") is None:
-        params.put("DynamicSteeringAggressiveness", "3")  # 默认平衡模式
+      try:
+        if params.get("DynamicSteeringAggressiveness") is None:
+          params.put("DynamicSteeringAggressiveness", "3")  # 默认平衡模式
+      except Exception:
+        carlog.warning("APA转向辅助功能: 无法设置默认转向模式")
 
       # 如果是林肯飞行家，添加特殊配置
       if "LINCOLN AVIATOR" in candidate.upper():
         carlog.info("APA转向辅助功能: 检测到林肯飞行家，应用特殊配置")
         # 林肯飞行家是非CANFD车型，需要特殊处理
-        params.put("APAVehicleType", "LINCOLN_AVIATOR")
+        try:
+          params.put("APAVehicleType", "LINCOLN_AVIATOR")
+        except Exception:
+          carlog.warning("APA转向辅助功能: 无法设置车型特殊配置")
     else:
       # 不支持APA转向辅助的车型
-      params.put_bool("APASupported", False)
+      try:
+        params.put_bool("APASupported", False)
+      except Exception:
+        carlog.warning(f"APA转向辅助功能: 无法设置不支持标志 - 车型 {candidate}")
       carlog.debug(f"APA转向辅助功能: 不支持的车型 {candidate}")
 
     ret.longitudinalTuning.kiBP = [0.]
