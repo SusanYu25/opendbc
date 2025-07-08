@@ -48,7 +48,7 @@ class CarController(CarControllerBase):
     super().__init__(dbc_names, CP, CP_SP)
     self.packer = CANPacker(dbc_names[Bus.pt])
     self.CAN = fordcan.CanBus(CP)
-    self.params = CP_SP.params
+    self.params = Params()
 
     self.apply_curvature_last = 0
     self.accel = 0.0
