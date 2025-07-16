@@ -7,6 +7,7 @@ from opendbc.car.ford.values import CarControllerParams, FordFlags
 from opendbc.car.interfaces import CarControllerBase, ISO_LATERAL_ACCEL, V_CRUISE_MAX
 from opendbc.car.carlog import carlog
 from common.params import Params
+from common.pid import PIDController
 
 LongCtrlState = structs.CarControl.Actuators.LongControlState
 VisualAlert = structs.CarControl.HUDControl.VisualAlert
@@ -49,8 +50,18 @@ class CarController(CarControllerBase):
     self.packer = CANPacker(dbc_names[Bus.pt])
     self.CAN = fordcan.CanBus(CP)
     self.params = Params()
+    self.pid = PIDController(k_p=CarControllerParams.APA_PID_GAINS[0],
+                           k_i=CarControllerParams.APA_PID_GAINS[1],
+                           k_d=CarControllerParams.APA_PID_GAINS[2],
+                           k_f=0.,  # 前馈项在这里不使用
+                           pos_limit=self.CP.steerAngleMax,
+                           neg_limit=-self.CP.steerAngleMax,
+                           anti_windup_rate=CarControllerParams.APA_PID_WINDUP_LIMIT)
 
     self.apply_curvature_last = 0
+    self.last_steering_angle_deg = 0.
+    self.ping_pong_state = 1
+    self.ping_pong_frame_counter = 0
     self.accel = 0.0
     self.gas = 0.0
     self.brake_request = False
@@ -87,18 +98,57 @@ class CarController(CarControllerBase):
     if (self.frame % CarControllerParams.STEER_STEP) == 0:
       # 如果APA转向辅助已启用，则使用新的APA命令
       if self.params.get_bool("DynamicSteeringEnabled"):
-        # 从曲率计算转向角度 (度) = 曲率 * 转向比 * 180/π
-        # 使用负值是因为Ford的转向角度定义与openpilot相反
-        steering_angle_deg = -actuators.curvature * self.CP.steerRatio * 180 / 3.14159
+        # 0. 检查PSCM状态，决定是否可以发送控制指令
+        # 驾驶员介入或永久故障时，重置并禁用
+        if CS.out.steerFaultDriverOverride or CS.out.steerFaultPermanent:
+          self.pid.reset()
+          steering_angle_deg = CS.out.steeringAngleDeg # 使用当前角度作为输出，实现平滑退出
+          self.last_steering_angle_deg = steering_angle_deg
+          can_sends.append(fordcan.create_apa_steering_command(self.packer, self.CAN, steering_angle_deg, CS.out.gearShifter))
+        else:
+          # 1. 计算期望转向角度 (Setpoint)
+          desired_angle_deg = -actuators.curvature * self.CP.steerRatio * 180 / 3.14159
 
-        # 添加日志，记录APA转向命令的发送
-        if self.frame % 100 == 0:  # 每5秒记录一次(20Hz * 100 = 5秒)
-          is_canfd = bool(self.CP.flags & FordFlags.CANFD)
-          carlog.debug(f"APA转向辅助: 发送转向命令 {steering_angle_deg:.2f}度, CANFD={is_canfd}")
+          # 2. 获取当前实际转向角度 (Measurement)
+          current_angle_deg = CS.out.steeringAngleDeg
 
-        # 发送APA转向命令
-        can_sends.append(fordcan.create_apa_steering_command(self.packer, self.CAN, steering_angle_deg))
+          # 3. 智能 "乒乓模式" 和 PID 积分项管理
+          # 当PSCM明确报告无法达到角度时，激活乒乓模式并冻结积分项
+          is_angle_not_reached = CS.out.steerFaultAngleNotReached
+          self.pid.freeze_I = is_angle_not_reached
+
+          if is_angle_not_reached:
+            ping_pong_period_frames = (1.0 / CarControllerParams.PING_PONG_FREQUENCY) * (1.0 / (CarControllerParams.STEER_STEP * DT_CTRL)) / 2.0
+            self.ping_pong_frame_counter += 1
+            if self.ping_pong_frame_counter > ping_pong_period_frames:
+              self.ping_pong_state *= -1
+              self.ping_pong_frame_counter = 0
+            desired_angle_deg += self.ping_pong_state * CarControllerParams.PING_PONG_AMPLITUDE
+          else:
+            self.ping_pong_frame_counter = 0
+            self.ping_pong_state = 1
+
+          # 4. 更新PID控制器
+          steering_angle_deg = self.pid.update(desired_angle_deg, current_angle_deg,
+                                               speed=CS.out.vEgo,
+                                               feedforward=desired_angle_deg)
+
+          # 5. 应用转向速率限制，平滑最终的转向指令
+          steering_angle_deg = np.clip(steering_angle_deg,
+                                       self.last_steering_angle_deg - CarControllerParams.STEER_ANGLE_RATE_LIMIT,
+                                       self.last_steering_angle_deg + CarControllerParams.STEER_ANGLE_RATE_LIMIT)
+          self.last_steering_angle_deg = steering_angle_deg
+
+          # 添加日志
+          if self.frame % 100 == 0:
+            carlog.debug(f"APA PID: Desired={desired_angle_deg:.2f}, Current={current_angle_deg:.2f}, Final={steering_angle_deg:.2f}, APA_Status={CS.out.apaLaneAssistStatus}")
+
+          # 6. 发送最终命令
+          can_sends.append(fordcan.create_apa_steering_command(self.packer, self.CAN, steering_angle_deg, CS.out.gearShifter))
       else:
+        # 重置PID积分项，防止在功能关闭时累积误差
+        self.pid.reset()
+
         # apply rate limits, curvature error limit, and clip to signal range
         current_curvature = -CS.out.yawRate / max(CS.out.vEgoRaw, 0.1)
         self.apply_curvature_last = apply_ford_curvature_limits(actuators.curvature, self.apply_curvature_last, current_curvature,
@@ -150,10 +200,20 @@ class CarController(CarControllerBase):
         accel_due_to_pitch = math.sin(CC.orientationNED[1]) * ACCELERATION_DUE_TO_GRAVITY
 
       accel_pitch_compensated = accel + accel_due_to_pitch
-      if accel_pitch_compensated > 0.3 or not CC.longActive:
+
+      # 创建一个"滑行死区"，以优先使用发动机制动而非机械刹车
+      # 仅当需要的减速度足够大时，才请求刹车
+      if not CC.longActive:
+        # 如果ACC关闭，则永不请求刹车
         self.brake_request = False
-      elif accel_pitch_compensated < 0.0:
+      elif accel_pitch_compensated > CarControllerParams.ZERO_GAS:
+        # 如果目标加速度为正，明确不请求刹车
+        self.brake_request = False
+      elif accel_pitch_compensated < CarControllerParams.BRAKE_PRESSED_GAS:
+        # 如果目标加速度小于一个明确的负阈值，明确请求刹车
         self.brake_request = True
+      # 在 ZERO_GAS 和 BRAKE_PRESSED_GAS 之间的区域，保持上一个刹车状态
+      # 这形成了一个滞后区间，防止刹车在临界点抖动
 
       stopping = CC.actuators.longControlState == LongCtrlState.stopping
       # TODO: look into using the actuators packet to send the desired speed

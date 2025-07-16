@@ -22,22 +22,47 @@ class CarControllerParams:
 
   STEER_DRIVER_ALLOWANCE = 1.0  # Driver intervention threshold, Nm
 
+  STEER_ANG_MAX_TC = 0.5
+
+  # 定义一个用于曲率速率限制的简单内部类
+  @dataclass
+  class AngleRateLimit:
+    speed_bp: list[float]  # 速度断点列表
+    speed_lim: list[float]  # 对应的曲率限制值列表
+
+  # Curvature rate limit - 增加高速时的转向速率限制
+  ANGLE_RATE_LIMIT_UP = AngleRateLimit(speed_bp=[5, 25], speed_lim=[0.0015, 0.0012])  # /s
+  ANGLE_RATE_LIMIT_DOWN = AngleRateLimit(speed_bp=[5, 25], speed_lim=[0.0015, 0.0015])  # /s
+
+  # 福特车型专用角度限制，提高响应速度
   ANGLE_LIMITS: AngleSteeringLimits = AngleSteeringLimits(
     0.02,  # Max curvature for steering command, m^-1
-    # Curvature rate limits
-    # Max curvature is limited by the EPS to an equivalent of ~2.0 m/s^2 at all speeds,
-    #  however max curvature rate linearly decreases as speed increases:
-    #  ~0.009 m^-1/sec at 7 m/s, ~0.002 m^-1/sec at 35 m/s
-    # Limit to ~2 m/s^3 up, ~3.3 m/s^3 down at 75 mph and match EPS limit at low speed
-    ([5, 25], [0.00045, 0.0001]),
-    ([5, 25], [0.00045, 0.00015])
+    # 增大高速时的转向速率限制，提高响应速度
+    ([5, 25], [0.0009, 0.0006]),  # 上调速率
+    ([5, 25], [0.0009, 0.0008])   # 下调速率
   )
+
   CURVATURE_ERROR = 0.002  # ~6 degrees at 10 m/s, ~10 degrees at 35 m/s
 
   ACCEL_MAX = 2.0               # m/s^2 max acceleration
   ACCEL_MIN = -3.5              # m/s^2 max deceleration
   MIN_GAS = -0.5
   INACTIVE_GAS = -5.0
+
+  # 非线性刹车响应的阈值
+  # 低于此加速度时，我们开始施加机械刹车
+  BRAKE_PRESSED_GAS = -0.2
+
+  # "零油门"区域的上限
+  # 高于此加速度时，我们认为需要给油
+  ZERO_GAS = 0.1
+
+  # APA转向辅助的参数
+  STEER_ANGLE_RATE_LIMIT = 25.0  # deg/s 转向角速率限制
+  APA_PID_GAINS = [3.0, 0.02, 0.8]  # Kp, Ki, Kd
+  APA_PID_WINDUP_LIMIT = 0.05  # 积分项抗饱和限制
+  PING_PONG_FREQUENCY = 0.25  # Hz, 乒乓振荡频率
+  PING_PONG_AMPLITUDE = 5.0  # deg, 乒乓振荡幅度
 
   def __init__(self, CP):
     pass
