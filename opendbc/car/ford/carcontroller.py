@@ -51,7 +51,6 @@ class CarController(CarControllerBase):
     self.CAN = fordcan.CanBus(CP)
     self.params = Params()
     MAX_STEER_ANGLE_DEG = 30.0
-
     self.pid = PIDController(k_p=CarControllerParams.APA_PID_GAINS[0],
                            k_i=CarControllerParams.APA_PID_GAINS[1],
                            k_d=CarControllerParams.APA_PID_GAINS[2],
