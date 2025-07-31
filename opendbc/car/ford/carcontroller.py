@@ -50,12 +50,14 @@ class CarController(CarControllerBase):
     self.packer = CANPacker(dbc_names[Bus.pt])
     self.CAN = fordcan.CanBus(CP)
     self.params = Params()
+    MAX_STEER_ANGLE_DEG = 30.0
+
     self.pid = PIDController(k_p=CarControllerParams.APA_PID_GAINS[0],
                            k_i=CarControllerParams.APA_PID_GAINS[1],
                            k_d=CarControllerParams.APA_PID_GAINS[2],
-                           k_f=0.,  # 前馈项在这里不使用
-                           pos_limit=self.CP.steerAngleMax,
-                           neg_limit=-self.CP.steerAngleMax,
+                           k_f=0.,
+                           pos_limit=MAX_STEER_ANGLE_DEG,
+                           neg_limit=-MAX_STEER_ANGLE_DEG,
                            anti_windup_rate=CarControllerParams.APA_PID_WINDUP_LIMIT)
 
     self.apply_curvature_last = 0
