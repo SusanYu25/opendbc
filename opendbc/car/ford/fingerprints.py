@@ -194,4 +194,18 @@ FW_VERSIONS = {
       b'RJ6T-14H102-BBB\x00\x00\x00\x00\x00\x00\x00\x00\x00',
     ],
   },
+  CAR.Lincoln_nautilus: {
+     (Ecu.eps, 0x730, None): [
+      b'K2GC-14D003-AH\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00',
+    ],
+    (Ecu.abs, 0x760, None): [
+      b'KG9C-2D053-MD\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00',
+    ],
+    (Ecu.fwdRadar, 0x764, None): [
+      b'JX7T-14D049-AD\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00',
+    ],
+    (Ecu.fwdCamera, 0x706, None): [
+      b'KK7T-14F397-AD\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00',
+    ],
+  },
 }
